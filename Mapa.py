@@ -260,8 +260,5 @@ folium.LayerControl(
 ).add_to(m)
 
 
-# Exportar
-from datetime import datetime
-
-filename = f"mapa_ccb_{datetime.now().strftime('%Y%m%d_%H%M%S')}.html"
+filename = f"mapa_CCB_proyectos.html"
 m.save(filename)
