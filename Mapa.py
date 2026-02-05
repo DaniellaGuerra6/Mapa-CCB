@@ -1,72 +1,76 @@
 """
+MAPA INTERACTIVO DE PROYECTOS – DEPARTAMENTO DEL ATLÁNTICO
+
+Este script construye un mapa interactivo en Folium que visualiza:
+- Municipios del Atlántico
+- Vías y puntos asociados a proyectos
+- Nuevas vías departamentales
+- Clasificación por categorías temáticas
 """
 
-# =====================================================
 # IMPORTS
-# =====================================================
+# -------------------------
 import geopandas as gpd
-import re
-import pandas as pd
+from shapely.ops import transform
 import folium
 from folium.features import GeoJsonTooltip
 import branca.colormap as cm
-from shapely.ops import transform
 from bs4 import BeautifulSoup
 import re
 import warnings
 import matplotlib.cm as mpl_cm
 warnings.filterwarnings("ignore")
 
-# -------------------------
+
+
 # FUNCIONES
 # -------------------------
 def drop_z(geom):
+    """
+    Elimina la coordenada Z de las geometrias
+    """
     if geom is None:
         return None
     return transform(lambda x, y, z=None: (x, y), geom)
 
-
 def html_a_texto(html):
+    """
+    Convierte texto en formato HTML a texto plano.
+    """
     if html is None or str(html).strip() == "":
         return ""
-
     soup = BeautifulSoup(html, "html.parser")
     texto = soup.get_text(separator=" ")
     texto = texto.replace("\xa0", " ")
     texto = re.sub(r"\s+", " ", texto)
-
     return texto.strip()
 
-
 def extraer_nombre_proyecto(texto, fallback=None):
+    """
+    Extraer el nombre del proyecto
+    """
     if texto is None or texto.strip() == "":
         return fallback
-
     patrones = [
         r"NOMBRE\s+DEL\s+PROYECTO\s*:\s*(.+)",
         r"NOMBRE\s+PROYECTO\s*:\s*(.+)"
     ]
-
     for pat in patrones:
         m = re.search(pat, texto, flags=re.IGNORECASE)
         if m:
             nombre = m.group(1)
-
-            # Cortar cuando empieza otra sección típica
             nombre = re.split(
                 r"PRIORIZADO|PLAN\s+PLURIANUAL|INVERSIÓN|ENTIDAD\s+CONTRATANTE",
                 nombre,
                 flags=re.IGNORECASE
             )[0]
-
             nombre = nombre.strip(" .:-")
             if nombre != "":
                 return nombre.upper()
-
     return fallback
 
 
-# -------------------------
+
 # CARGA DE DATOS
 # -------------------------
 atlantico = gpd.read_file("MAPAS/MGN_2/DPTO_CNMBR_ATLÁNTICO.shp")
@@ -74,14 +78,15 @@ vias      = gpd.read_file("MAPAS/VIAS/Linea.shp")
 puntos    = gpd.read_file("MAPAS/PUNTOS/Puntos.shp")
 nuevas    = gpd.read_file("MAPAS/NUEVAS/Vías Nuevas.shp")
 nuevas = nuevas.rename(columns={'Nombre': 'name'})
-# Municipios
 atlantico = atlantico.rename(columns={
     "MPIO_CCNCT": "COD_MUN",
     "MPIO_CNMBR": "NOM_MUN"
 })
 atlantico = atlantico[["COD_MUN", "NOM_MUN", "MPM", "geometry"]]
 
-# Texto y categorías
+
+# Limpieza y transformación
+# -------------------------
 for df in [vias, puntos]:
     df["name"] = df["name"].str.strip().str.upper()
     df["descripcion_txt"] = df["descriptio"].apply(html_a_texto).str.upper()
@@ -90,11 +95,15 @@ for df in [vias, puntos]:
         lambda r: extraer_nombre_proyecto(r["descripcion_txt"], r["name"]),
         axis=1
     )
-    df = df.drop(columns=['name', 'altitude', 'alt_mode', 'descriptio', 'folders', 'time_begin', 'time_end', 'time_when', 'descripcion_txt'])
+    df = df.drop(columns=[
+        'name', 'altitude', 'alt_mode', 'descriptio', 'folders', 'time_begin', 
+        'time_end', 'time_when', 'descripcion_txt'])
+    
 nuevas['proyecto_nombre'] = nuevas['name'].str.strip().str.upper()
 nuevas = nuevas.drop(columns=['id', 'name', 'Longitud (',])
 
-# -------------------------
+
+
 # REPROYECCIÓN OBLIGATORIA
 # -------------------------
 for gdf in [atlantico, vias, puntos, nuevas]:
@@ -103,8 +112,6 @@ for gdf in [atlantico, vias, puntos, nuevas]:
 
 
 
-
-# -------------------------
 # MAPA BASE
 # -------------------------
 centro = atlantico.to_crs(epsg=3116).geometry.centroid.to_crs(epsg=4326)
@@ -115,7 +122,6 @@ m = folium.Map(
     tiles="CartoDB positron"
 )
 
-# -------------------------
 # MUNICIPIOS (CAPA FIJA)
 # -------------------------
 folium.GeoJson(
@@ -133,7 +139,7 @@ folium.GeoJson(
     )
 ).add_to(m)
 
-# -------------------------
+
 # MUNICIPIOS POR MPM (OPCIONAL)
 # -------------------------
 ylgnbu_r = mpl_cm.get_cmap("YlGnBu", 256)  # 256 pasos
@@ -146,8 +152,10 @@ colormap = cm.LinearColormap(
     caption="MPM"
 )
 
-
-mpm_fg = folium.FeatureGroup(name="Municipios por MPM", show=False)
+mpm_fg = folium.FeatureGroup(
+    name="Municipios por MPM", 
+    show=False
+    )
 
 folium.GeoJson(
     atlantico,
@@ -166,12 +174,13 @@ folium.GeoJson(
 mpm_fg.add_to(m)
 colormap.add_to(m)
 
-# -------------------------
-# NUEVAS RUTAS
+
+
+# NUEVAS RUTAS DEPARTAMENTALES
 # -------------------------
 nuevas_fg = folium.FeatureGroup(
-    name="Nuevas rutas", 
-    show=False
+    name="Nuevas rutas departamentales", 
+    show=True
     ).add_to(m)
 
 folium.GeoJson(
@@ -186,8 +195,9 @@ folium.GeoJson(
     )
 ).add_to(nuevas_fg)
 
-# -------------------------
-# CATEGORÍAS (BOX ÚNICO)
+
+
+# CATEGORÍAS TEMÁTICAS
 # -------------------------
 CATEGORIA_COLORES = {
     "AMBIENTAL Y GESTIÓN DE DEL TERRITORIO": "#0D7C66",
@@ -206,8 +216,8 @@ ICONOS_CATEGORIA = {
 for categoria, color in CATEGORIA_COLORES.items():
 
     fg = folium.FeatureGroup(
-        name=categoria,
-        show=False
+        name=categoria.title(),
+        show=True
     ).add_to(m)
 
     # ---- VÍAS ----
@@ -252,7 +262,7 @@ for categoria, color in CATEGORIA_COLORES.items():
             tooltip=f"Proyecto: {row['proyecto_nombre']}"
         ).add_to(fg)
 
-# -------------------------
+
 # CONTROL DE CAPAS
 # -------------------------
 folium.LayerControl(
@@ -260,5 +270,5 @@ folium.LayerControl(
 ).add_to(m)
 
 
-filename = f"mapa_CCB_proyectos.html"
+filename = f"index.html"
 m.save(filename)
